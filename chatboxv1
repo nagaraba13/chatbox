@@ -1,0 +1,137 @@
+import streamlit as st
+import openai
+import os
+from PyPDF2 import PdfReader
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+# Set up OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# List of available GPT models
+GPT_MODELS = ["gpt-3.5-turbo", "gpt-4", "gpt-3.5-turbo-16k", "gpt-4-32k"]
+
+
+def extract_text_from_pdf(pdf_file):
+    pdf_reader = PdfReader(pdf_file)
+    text = ""
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+    return text
+
+
+def get_chatgpt_response(messages, model):
+    response = openai.ChatCompletion.create(
+        model=model,
+        messages=messages,
+        stream=True
+    )
+    return response
+
+
+def summarize_text(text, model):
+    chunks = [text[i:i + 4000] for i in range(0, len(text), 4000)]
+    summaries = []
+    for chunk in chunks:
+        messages = [
+            {"role": "system", "content": "You are a helpful assistant that summarizes text."},
+            {"role": "user", "content": f"Please summarize the following text:\n\n{chunk}"}
+        ]
+        response = openai.ChatCompletion.create(
+            model=model,
+            messages=messages,
+            max_tokens=500
+        )
+        summaries.append(response.choices[0].message['content'])
+    return " ".join(summaries)
+
+
+def main():
+    # Initialize chat history and selected model
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "selected_model" not in st.session_state:
+        st.session_state.selected_model = GPT_MODELS[0]
+    if "pdf_summary" not in st.session_state:
+        st.session_state.pdf_summary = ""
+
+    # Sidebar
+    st.sidebar.title("Balan Nagarajan Chat GPT")
+
+    st.sidebar.header("About")
+    st.sidebar.info(
+        "This tool is an experimental chat box using API calls to GPT models. "
+        "This model can make mistakes. PDF summarize is at best rudimentary and is in development."
+        "The author of this code is Balan Nagarajan at nagaraba13@yahoo.com"
+    )
+
+    st.sidebar.header("Model Selection")
+    st.session_state.selected_model = st.sidebar.selectbox(
+        "Choose a GPT model",
+        GPT_MODELS,
+        index=GPT_MODELS.index(st.session_state.selected_model)
+    )
+
+    # File uploader for PDF in sidebar
+    st.sidebar.header("PDF Upload")
+    uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type="pdf")
+    if uploaded_file is not None:
+        pdf_text = extract_text_from_pdf(uploaded_file)
+        st.sidebar.success("PDF uploaded successfully!")
+        if st.sidebar.button("Add PDF content to chat"):
+            st.session_state.messages.append(
+                {"role": "system", "content": f"Here's the content of the uploaded PDF: {pdf_text[:1000]}..."})
+            st.sidebar.success("PDF content added to chat!")
+
+        if st.sidebar.button("Summarize PDF"):
+            with st.spinner("Summarizing PDF..."):
+                st.session_state.pdf_summary = summarize_text(pdf_text, st.session_state.selected_model)
+            st.sidebar.success("PDF summarized!")
+
+    # Display PDF summary if available
+    if st.session_state.pdf_summary:
+        st.sidebar.subheader("PDF Summary")
+        st.sidebar.write(st.session_state.pdf_summary)
+
+    # Chat Options in sidebar
+    st.sidebar.header("Chat Options")
+    if st.sidebar.button("Clear Chat"):
+        st.session_state.messages = []
+        st.sidebar.success("Chat cleared!")
+        st.experimental_rerun()
+
+    if st.sidebar.button("Start New Chat"):
+        st.session_state.messages = []
+        st.session_state.selected_model = GPT_MODELS[0]
+        st.session_state.pdf_summary = ""
+        st.sidebar.success("New chat started!")
+        st.experimental_rerun()
+
+    # Main content area
+    st.header("Chat Interface")
+
+    # Chat interface
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # User input
+    if prompt := st.chat_input("What would you like to know?"):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            for response in get_chatgpt_response(st.session_state.messages, st.session_state.selected_model):
+                full_response += response.choices[0].delta.get("content", "")
+                message_placeholder.markdown(full_response + "▌")
+            message_placeholder.markdown(full_response)
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+
+if __name__ == "__main__":
+    main()
